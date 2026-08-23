@@ -1,34 +1,36 @@
-# Multi-stage Dockerfile for FastAPI GCP Cloud Run application
-FROM python:3.11-slim as builder
+# Multi-stage Production Dockerfile for GCP Cloud Run
+# Stage 1: Build Dependencies
+FROM python:3.11-slim AS builder
 
 WORKDIR /app
 
-# Install build dependencies
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 COPY app/requirements.txt .
-RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+RUN pip install --no-cache-dir --user -r requirements.txt
 
-# Final runtime image
-FROM python:3.11-slim
+# Stage 2: Final Minimal Runtime Image
+FROM python:3.11-slim AS runner
 
 WORKDIR /app
 
-# Create non-root system user for security
-RUN groupadd -g 1000 appuser && \
-    useradd -u 1000 -g appuser -s /bin/sh appuser
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PATH=/home/appuser/.local/bin:$PATH
 
-COPY --from=builder /install /usr/local
-COPY app/ ./app
+RUN groupadd -g 10001 appuser && \
+    useradd -u 10001 -g appuser -s /bin/sh -m appuser
 
-ENV PORT=8080
-ENV APP_ENV=production
-ENV PYTHONUNBUFFERED=1
+COPY --from=builder /root/.local /home/appuser/.local
+COPY --chown=appuser:appuser . /app
 
 USER appuser
 
 EXPOSE 8080
 
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT}"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
